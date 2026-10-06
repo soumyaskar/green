@@ -1,153 +1,172 @@
+#!/usr/bin/env python3
+"""
+Green Repository Utility & Git Diagnostic Tool
+
+A safe, reliable Git management script that:
+- Verifies local Git configuration (name, email) for proper GitHub attribution.
+- Checks origin remote and branch alignment.
+- Performs repository health checks and provides contribution graph diagnostics.
+- Avoids fake commit generation, history rewriting, or forced pushes.
+"""
+
+import os
 import subprocess
 import sys
-import os
-import random
-from datetime import datetime, timedelta
+from typing import List, Optional, Tuple
 
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-# Terminal colors
+# Terminal color formatting
 GREEN = "\033[92m"
 RED = "\033[91m"
 CYAN = "\033[96m"
 YELLOW = "\033[93m"
-MAGENTA = "\033[95m"
+BOLD = "\033[1m"
 RESET = "\033[0m"
 
-# Realistic developer commit messages
-REALISTIC_MESSAGES = [
-    "Fix minor bug in API response handler",
-    "Refactor utility functions for better readability",
-    "Update project documentation and comments",
-    "Optimize rendering performance in core loop",
-    "Add unit tests for edge case scenarios",
-    "Improve styling and responsive UI layout",
-    "Clean up redundant imports and unused variables",
-    "Update dependency configurations",
-    "Fix typo in error logging messages",
-    "Enhance validation logic for user input",
-    "Implement helper methods for data processing",
-    "Format code according to project style guide",
-    "Patch potential memory leak in listener hook",
-    "Add fallback handling for network timeout",
-    "Improve state management logic",
-    "Update environment variables schema",
-    "Adjust theme colors and contrast ratio",
-    "Refactor component structure for reusability",
-    "Fix issue with date parsing in edge cases",
-    "Optimize assets and reduce bundle size",
-    "Add type definitions and interface declarations",
-    "Improve accessibility tags and aria labels",
-    "Tweak animation duration and easing curves",
-    "Add error boundary wrapper for resilience",
-    "Sync config files with latest specs",
-    "Update test coverage and assertions",
-    "Minor tweak to logging format",
-    "Cache computation results for faster lookup",
-    "Fix edge case in pagination logic",
-    "Clean up temporary debug statements",
-    "Standardize error codes across modules",
-    "Improve form validation feedback",
-    "Refactor constants into separate module",
-    "Fix race condition in async handler",
-    "Update README with latest setup instructions"
-]
+# Ensure UTF-8 output encoding on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-def generate_random_time(date_obj, commit_index, total_commits):
-    """Generate realistic, sequentially ordered times throughout the day."""
-    start_hour = 9   # 9:00 AM
-    end_hour = 23    # 11:00 PM
-    
-    slot_hours = (end_hour - start_hour) / max(total_commits, 1)
-    hour = int(start_hour + (commit_index * slot_hours) + random.uniform(0, slot_hours * 0.8))
-    hour = min(max(hour, 9), 23)
-    minute = random.randint(0, 59)
-    second = random.randint(0, 59)
-    
-    return date_obj.strftime(f"%Y-%m-%dT{hour:02d}:{minute:02d}:{second:02d}")
 
-def get_random_commit_count():
+def run_git_command(args: List[str], cwd: Optional[str] = None) -> Tuple[int, str, str]:
     """
-    Randomized natural distribution (kabhi 1, 2, 3, 4, 5):
-    - 1 commit: 35%
-    - 2 commits: 35%
-    - 3 commits: 18%
-    - 4 commits: 8%
-    - 5 commits: 4%
+    Executes a Git command safely using raw argument lists without shell injection.
+    
+    Args:
+        args: List of command arguments (e.g. ['git', 'status'])
+        cwd: Directory where the command should be run
+        
+    Returns:
+        Tuple of (returncode, stdout_str, stderr_str)
     """
-    choices = [1, 2, 3, 4, 5]
-    weights = [35, 35, 18, 8, 4]
-    return random.choices(choices, weights=weights)[0]
+    try:
+        result = subprocess.run(
+            args,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False
+        )
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+    except FileNotFoundError:
+        return 127, "", "Error: 'git' command not found. Please ensure Git is installed and in PATH."
+    except Exception as exc:
+        return 1, "", f"Unexpected execution error: {exc}"
 
-def rebuild_clean_history(start_date, end_date):
-    total_days = (end_date.date() - start_date.date()).days + 1
-    print(f"\n{CYAN}⚡ Building clean randomized commits from {YELLOW}{start_date.strftime('%Y-%m-%d')}{CYAN} to {YELLOW}{end_date.strftime('%Y-%m-%d')}{CYAN} ({total_days} days)...{RESET}\n")
 
-    # Save current files content
-    with open("README.md", "r", encoding="utf-8") as f:
-        readme_content = f.read()
-    with open("green_graph.py", "r", encoding="utf-8") as f:
-        script_content = f.read()
+def get_git_config(key: str) -> Optional[str]:
+    """Retrieve a Git configuration value."""
+    code, stdout, _ = run_git_command(["git", "config", "--get", key])
+    return stdout if code == 0 and stdout else None
 
-    # Update git remote to new repository
-    subprocess.run(["git", "remote", "set-url", "origin", "https://github.com/soumyaskarl/green.git"], check=False)
 
-    # Create fresh orphan branch
-    subprocess.run(["git", "checkout", "--orphan", "clean-streak-gre"], check=True)
-    subprocess.run(["git", "rm", "-rf", "."], check=True)
+def check_git_status() -> bool:
+    """Check and display repository diagnostics and contribution graph prerequisites."""
+    print(f"\n{BOLD}{CYAN}=== Git Repository Diagnostics & Configuration ==={RESET}\n")
 
-    # Restore files
-    with open("README.md", "w", encoding="utf-8") as f:
-        f.write(readme_content)
-    with open("green_graph.py", "w", encoding="utf-8") as f:
-        f.write(script_content)
+    # 1. Author and Email Configuration
+    user_name = get_git_config("user.name")
+    user_email = get_git_config("user.email")
 
-    subprocess.run(["git", "add", "README.md", "green_graph.py"], check=True)
-
-    env = os.environ.copy()
-    first_date_str = start_date.strftime("%Y-%m-%dT09:15:00")
-    env["GIT_COMMITTER_DATE"] = first_date_str
-    env["GIT_AUTHOR_DATE"] = first_date_str
-    subprocess.run(["git", "commit", "-m", "Initial commit: Set up repository tooling and documentation"], env=env, check=True)
-
-    total_commits = 1
-
-    for i in range(total_days):
-        current_date = start_date + timedelta(days=i)
-        date_str = current_date.strftime("%Y-%m-%d")
-        
-        num_commits = get_random_commit_count()
-        total_commits += num_commits
-        
-        daily_messages = random.sample(REALISTIC_MESSAGES, min(num_commits, len(REALISTIC_MESSAGES)))
-
-        for c_idx in range(num_commits):
-            formatted_date = generate_random_time(current_date, c_idx, num_commits)
-            env["GIT_COMMITTER_DATE"] = formatted_date
-            env["GIT_AUTHOR_DATE"] = formatted_date
-            
-            msg = daily_messages[c_idx]
-            subprocess.run(
-                ["git", "commit", "--allow-empty", "-m", msg],
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-
-    # Replace main branch
-    subprocess.run(["git", "branch", "-M", "main"], check=True)
-
-    print(f"\n{GREEN}🎉 Created {YELLOW}{total_commits}{GREEN} natural randomized commits across {YELLOW}{total_days}{GREEN} days ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')})!{RESET}")
-    print(f"{CYAN}Pushing to https://github.com/soumyaskar/green_graph.git...{RESET}")
-
-    push_result = subprocess.run(["git", "push", "--force", "-u", "origin", "main"])
-    if push_result.returncode == 0:
-        print(f"\n{GREEN}✔ Successfully pushed to green_graph repository!{RESET}\n")
+    print(f"{BOLD}1. Git Identity:{RESET}")
+    if user_name:
+        print(f"   - User Name : {GREEN}{user_name}{RESET}")
     else:
-        print(f"\n{RED}Push failed with code {push_result.returncode}.{RESET}\n")
+        print(f"   - User Name : {RED}Not configured! Set via `git config user.name <name>`{RESET}")
+
+    if user_email:
+        print(f"   - User Email: {GREEN}{user_email}{RESET}")
+    else:
+        print(f"   - User Email: {RED}Not configured! Set via `git config user.email <email>`{RESET}")
+
+    # 2. Remote Origin Configuration
+    code, remote_out, _ = run_git_command(["git", "remote", "-v"])
+    print(f"\n{BOLD}2. Remotes:{RESET}")
+    if code == 0 and remote_out:
+        for line in remote_out.splitlines():
+            print(f"   - {line}")
+    else:
+        print(f"   - {YELLOW}No remotes configured.{RESET}")
+
+    # 3. Current Branch
+    code, branch_out, _ = run_git_command(["git", "branch", "--show-current"])
+    current_branch = branch_out if code == 0 and branch_out else "unknown"
+    print(f"\n{BOLD}3. Active Branch:{RESET}")
+    print(f"   - Branch: {GREEN}{current_branch}{RESET}")
+
+    # 4. Working Tree Status
+    code, status_out, _ = run_git_command(["git", "status", "--short"])
+    print(f"\n{BOLD}4. Working Tree Status:{RESET}")
+    if code == 0:
+        if status_out:
+            print(f"   - Uncommitted changes detected:\n{YELLOW}{status_out}{RESET}")
+        else:
+            print(f"   - {GREEN}Working tree is clean.{RESET}")
+    else:
+        print(f"   - {RED}Failed to get git status.{RESET}")
+
+    # 5. Contribution Graph Attribution Guide
+    print(f"\n{BOLD}{CYAN}=== GitHub Contribution Graph Attribution Checklist ==={RESET}")
+    print("For commits to turn green on your GitHub contribution graph:")
+    print(" 1. The email used to author the commits must match an email verified in your GitHub account.")
+    print("    (Check: https://github.com/settings/emails)")
+    print(" 2. Commits must be made in the repository's default branch (usually 'main') or gh-pages.")
+    print(" 3. Commits must be pushed to a repository owned by you or a repository you have contributed to.")
+    print(" 4. If the repository is private, enable 'Private contributions' in your GitHub profile settings.")
+    print(" 5. Avoid fake timestamps or rewriting history; GitHub evaluates real pushed commits.\n")
+
+    return True
+
+
+def stage_and_commit(message: str) -> bool:
+    """
+    Safely stage tracked/modified files and create a genuine commit.
+    
+    Args:
+        message: Descriptive commit message
+    """
+    if not message.strip():
+        print(f"{RED}Error: Commit message cannot be empty.{RESET}")
+        return False
+
+    code, _, err = run_git_command(["git", "add", "-A"])
+    if code != 0:
+        print(f"{RED}Failed to stage changes: {err}{RESET}")
+        return False
+
+    code, out, err = run_git_command(["git", "commit", "-m", message])
+    if code == 0:
+        print(f"{GREEN}✔ Commit successful:{RESET}\n{out}")
+        return True
+    elif "nothing to commit" in out or "nothing to commit" in err:
+        print(f"{YELLOW}Notice: No changes to commit.{RESET}")
+        return True
+    else:
+        print(f"{RED}Commit failed: {err or out}{RESET}")
+        return False
+
+
+def push_to_origin(branch: str = "main") -> bool:
+    """
+    Safely push commits to origin on the specified branch without force-pushing.
+    
+    Args:
+        branch: Target branch name (default 'main')
+    """
+    print(f"\n{CYAN}Pushing changes to origin/{branch}...{RESET}")
+    code, out, err = run_git_command(["git", "push", "origin", branch])
+    if code == 0:
+        print(f"{GREEN}✔ Successfully pushed to origin/{branch}!{RESET}")
+        if out:
+            print(out)
+        return True
+    else:
+        print(f"{RED}Push failed with return code {code}.{RESET}")
+        if err:
+            print(f"{RED}Error: {err}{RESET}")
+        return False
+
 
 if __name__ == "__main__":
-    start_date = datetime(2026, 1, 1)
-    end_date = datetime.now()
-    rebuild_clean_history(start_date, end_date)
+    check_git_status()
